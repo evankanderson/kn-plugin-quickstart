@@ -6,6 +6,8 @@
 
 ## Getting Started
 
+Note: In order to use the `quickstart` plugin, you must install the [Kubernetes CLI `kubectl`](https://kubernetes.io/docs/tasks/tools/install-kubectl) and either [`kind`](https://kind.sigs.k8s.io/docs/user/quick-start) or [`minikube`](https://minikube.sigs.k8s.io/docs/start/).
+
 ### Installation
 
 You can download the latest binaries from the [Releases](https://github.com/knative-sandbox/kn-plugin-quickstart/releases) page.
@@ -74,4 +76,14 @@ git clone git@github.com:knative-sandbox/kn-plugin-quickstart.git
 cd kn-plugin-quickstart
 ./hack/build.sh
 ```
+
+## Using the Nightlies
+
+You can grab the latest nightly binary executable for:
+
+- [macOS](https://storage.googleapis.com/knative-nightly/kn-plugin-quickstart/latest/kn-quickstart-darwin-amd64)
+- [Linux](https://storage.googleapis.com/knative-nightly/kn-plugin-quickstart/latest/kn-quickstart-linux-amd64)
+- [Windows](https://storage.googleapis.com/knative-nightly/kn-plugin-quickstart/latest/kn-quickstart-windows-amd64.exe)
+
+Add the binary to the system PATH and ensure that it is executable.
 

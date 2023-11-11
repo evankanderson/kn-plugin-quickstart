@@ -19,7 +19,6 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -27,39 +26,69 @@ import (
 	"knative.dev/kn-plugin-quickstart/pkg/install"
 )
 
-var clusterName = "minikube-knative"
-var kubernetesVersion = "1.22.2"
-var minikubeVersion = 1.23
+var clusterName string
+var kubernetesVersion = "1.25.3"
+var clusterVersionOverride bool
+var minikubeVersion = 1.28
+var cpus = "3"
+var memory = "3072"
+var installKnative = true
 
 // SetUp creates a local Minikube cluster and installs all the relevant Knative components
-func SetUp() error {
+func SetUp(name, kVersion string, installServing, installEventing bool) error {
 	start := time.Now()
+
+	// if neither the "install-serving" or "install-eventing" flags are set,
+	// then we assume the user wants to install both serving and eventing
+	if !installServing && !installEventing {
+		installServing = true
+		installEventing = true
+	}
+
+	// kubectl is required, fail if not found
+	if _, err := exec.LookPath("kubectl"); err != nil {
+		fmt.Println("ERROR: kubectl is required for quickstart")
+		fmt.Println("Download from https://kubectl.docs.kubernetes.io/installation/kubectl/")
+		os.Exit(1)
+	}
+
+	clusterName = name
+	if kVersion != "" {
+		kubernetesVersion = kVersion
+		clusterVersionOverride = true
+	}
 
 	if err := createMinikubeCluster(); err != nil {
 		return fmt.Errorf("creating cluster: %w", err)
 	}
-	if err := install.Serving(); err != nil {
-		return fmt.Errorf("install serving: %w", err)
-	}
-	if err := install.Kourier(); err != nil {
-		return fmt.Errorf("install kourier: %w", err)
-	}
-	if err := install.KourierMinikube(); err != nil {
-		return fmt.Errorf("configure kourier: %w", err)
-	}
-	if err := install.Eventing(); err != nil {
-		return fmt.Errorf("install eventing: %w", err)
+	fmt.Print("\n")
+	fmt.Println("To finish setting up networking for minikube, run the following command in a separate terminal window:")
+	fmt.Println("    minikube tunnel --profile knative")
+	fmt.Println("The tunnel command must be running in a terminal window any time when using the knative quickstart environment.")
+	fmt.Println("\nPress the Enter key to continue")
+	fmt.Scanln()
+	if installKnative {
+		if installServing {
+			if err := install.Serving(); err != nil {
+				return fmt.Errorf("install serving: %w", err)
+			}
+			if err := install.Kourier(); err != nil {
+				return fmt.Errorf("install kourier: %w", err)
+			}
+			if err := install.KourierMinikube(); err != nil {
+				return fmt.Errorf("configure kourier: %w", err)
+			}
+		}
+		if installEventing {
+			if err := install.Eventing(); err != nil {
+				return fmt.Errorf("install eventing: %w", err)
+			}
+		}
 	}
 
 	finish := time.Since(start).Round(time.Second)
 	fmt.Printf("🚀 Knative install took: %s \n", finish)
 	fmt.Println("🎉 Now have some fun with Serverless and Event Driven Apps!")
-
-	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
-		fmt.Print("\n")
-		fmt.Println("To finish setting up networking for minikube, run the following command in a separate terminal window:")
-		fmt.Println("    minikube tunnel --profile minikube-knative")
-	}
 
 	return nil
 }
@@ -90,7 +119,7 @@ func checkMinikubeVersion() error {
 	}
 	if userMinikubeVersion < minikubeVersion {
 		var resp string
-		fmt.Printf("WARNING: We require at least Minikube v%.2f, while you are using v%.2f\n", minikubeVersion, userMinikubeVersion)
+		fmt.Printf("WARNING: We recommend at least Minikube v%.2f, while you are using v%.2f\n", minikubeVersion, userMinikubeVersion)
 		fmt.Println("You can download a newer version from https://github.com/kubernetes/minikube/releases/")
 		fmt.Print("Continue anyway? (not recommended) [y/N]: ")
 		fmt.Scanf("%s", &resp)
@@ -107,7 +136,6 @@ func checkMinikubeVersion() error {
 // the option of deleting the existing cluster and recreating it. If not, it proceeds to
 // creating a new cluster
 func checkForExistingCluster() error {
-
 	getClusters := exec.Command("minikube", "profile", "list")
 	out, err := getClusters.CombinedOutput()
 	if err != nil {
@@ -127,15 +155,30 @@ func checkForExistingCluster() error {
 		fmt.Scanf("%s", &resp)
 		if strings.ToLower(resp) != "y" {
 			fmt.Println("Installation skipped")
+			checkKnativeNamespace := exec.Command("kubectl", "get", "namespaces")
+			output, err := checkKnativeNamespace.CombinedOutput()
+			namespaces := string(output)
+			if err != nil {
+				fmt.Println(string(output))
+				return fmt.Errorf("check existing cluster: %w", err)
+			}
+			if strings.Contains(namespaces, "knative") {
+				fmt.Print("Knative installation already exists.\nDelete and recreate the cluster [y/N]: ")
+				fmt.Scanf("%s", &resp)
+				if strings.ToLower(resp) != "y" {
+					fmt.Println("Skipping installation")
+					installKnative = false
+					return nil
+				} else {
+					if err := recreateCluster(); err != nil {
+						return fmt.Errorf("failed recreating cluster: %w", err)
+					}
+				}
+			}
 			return nil
 		}
-		fmt.Println("deleting cluster...")
-		deleteCluster := exec.Command("minikube", "delete", "--profile", clusterName)
-		if err := deleteCluster.Run(); err != nil {
-			return fmt.Errorf("delete cluster: %w", err)
-		}
-		if err := createNewCluster(); err != nil {
-			return fmt.Errorf("new cluster: %w", err)
+		if err := recreateCluster(); err != nil {
+			return fmt.Errorf("failed recreating cluster: %w", err)
 		}
 		return nil
 	}
@@ -149,14 +192,36 @@ func checkForExistingCluster() error {
 
 // createNewCluster creates a new Minikube cluster
 func createNewCluster() error {
-
 	fmt.Println("☸ Creating Minikube cluster...")
-	fmt.Println("\nBy default, using the standard minikube driver for your system")
-	fmt.Println("If you wish to use a different driver, please configure minikube using")
-	fmt.Print("    minikube config set driver <your-driver>\n\n")
+
+	if !clusterVersionOverride {
+		fmt.Println("\nUsing the standard minikube driver for your system")
+		fmt.Println("If you wish to use a different driver, please configure minikube using")
+		fmt.Print("    minikube config set driver <your-driver>\n\n")
+
+		// If minikube config kubernetes-version exists, use that instead of our default
+		if config, ok := getMinikubeConfig("kubernetes-version"); ok {
+			kubernetesVersion = config
+		}
+	}
+
+	// get user configs for memory/cpus if they exist
+	if config, ok := getMinikubeConfig("cpus"); ok {
+		cpus = config
+	}
+	if config, ok := getMinikubeConfig("memory"); ok {
+		memory = config
+	}
 
 	// create cluster and wait until ready
-	createCluster := exec.Command("minikube", "start", "--kubernetes-version", kubernetesVersion, "--cpus", "3", "--profile", clusterName, "--wait", "all")
+	createCluster := exec.Command("minikube", "start",
+		"--kubernetes-version", kubernetesVersion,
+		"--cpus", cpus,
+		"--memory", memory,
+		"--profile", clusterName,
+		"--wait", "all",
+		"--insecure-registry", "10.0.0.0/24",
+		"--addons=registry")
 	if err := runCommandWithOutput(createCluster); err != nil {
 		return fmt.Errorf("minikube create: %w", err)
 	}
@@ -183,4 +248,26 @@ func parseMinikubeVersion(v string) (float64, error) {
 	}
 
 	return floatVersion, nil
+}
+
+func getMinikubeConfig(k string) (string, bool) {
+	var ok bool
+	getConfig := exec.Command("minikube", "config", "get", k)
+	v, err := getConfig.Output()
+	if err == nil {
+		ok = true
+	}
+	return strings.TrimRight(string(v), "\n"), ok
+}
+
+func recreateCluster() error {
+	fmt.Println("deleting cluster...")
+	deleteCluster := exec.Command("minikube", "delete", "--profile", clusterName)
+	if err := deleteCluster.Run(); err != nil {
+		return fmt.Errorf("delete cluster: %w", err)
+	}
+	if err := createNewCluster(); err != nil {
+		return fmt.Errorf("new cluster: %w", err)
+	}
+	return nil
 }

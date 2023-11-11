@@ -17,20 +17,20 @@ package install
 import (
 	"fmt"
 	"os/exec"
-	"runtime"
 	"strings"
 	"time"
 )
 
-var servingVersion = "0.26.0"
-var kourierVersion = "0.26.0"
-var eventingVersion = "0.26.0"
+// Component versions are generated at buildtime via the hack/build.sh script
+var ServingVersion string
+var KourierVersion string
+var EventingVersion string
 
 // Kourier installs Kourier networking layer from Github YAML files
 func Kourier() error {
-	fmt.Println("🕸️ Installing Kourier networking layer v" + kourierVersion + " ...")
+	fmt.Println("🕸️ Installing Kourier networking layer v" + KourierVersion + " ...")
 
-	if err := retryingApply("https://github.com/knative-sandbox/net-kourier/releases/download/v" + kourierVersion + "/kourier.yaml"); err != nil {
+	if err := retryingApply("https://github.com/knative-sandbox/net-kourier/releases/download/knative-v" + KourierVersion + "/kourier.yaml"); err != nil {
 		return fmt.Errorf("wait: %w", err)
 	}
 	if err := waitForPodsReady("kourier-system"); err != nil {
@@ -81,7 +81,7 @@ spec:
 
 	fmt.Println("    Kourier service installed...")
 
-	domainDns := exec.Command("kubectl", "patch", "configmap", "-n", "knative-serving", "config-domain", "-p", "{\"data\": {\"127.0.0.1.nip.io\": \"\"}}")
+	domainDns := exec.Command("kubectl", "patch", "configmap", "-n", "knative-serving", "config-domain", "-p", "{\"data\": {\"127.0.0.1.sslip.io\": \"\"}}")
 	if err := domainDns.Run(); err != nil {
 		return fmt.Errorf("domain dns: %w", err)
 	}
@@ -95,7 +95,7 @@ spec:
 func KourierMinikube() error {
 	fmt.Println("🕸 Configuring Kourier for Minikube...")
 
-	if err := retryingApply("https://github.com/knative/serving/releases/download/v" + servingVersion + "/serving-default-domain.yaml"); err != nil {
+	if err := retryingApply("https://github.com/knative/serving/releases/download/knative-v" + ServingVersion + "/serving-default-domain.yaml"); err != nil {
 		return fmt.Errorf("default domain: %w", err)
 	}
 	if err := waitForPodsReady("knative-serving"); err != nil {
@@ -104,25 +104,14 @@ func KourierMinikube() error {
 
 	fmt.Println("    Domain DNS set up...")
 
-	// For windows and mac users, do not automatically spawn a tunnel
-	// Instead, they will be directed to create one manually after
-	// the plugin finishes
-	if runtime.GOOS != "window" && runtime.GOOS != "darwin" {
-		tunnel := exec.Command("minikube", "tunnel", "--profile", "minikube-knative")
-		if err := tunnel.Start(); err != nil {
-			return fmt.Errorf("tunnel: %w", err)
-		}
-		fmt.Println("    Minikube tunnel...")
-	}
-
 	fmt.Println("    Finished configuring Kourier")
 	return nil
 }
 
 // Serving installs Knative Serving from Github YAML files
 func Serving() error {
-	fmt.Println("🍿 Installing Knative Serving v" + servingVersion + " ...")
-	baseURL := "https://github.com/knative/serving/releases/download/v" + servingVersion
+	fmt.Println("🍿 Installing Knative Serving v" + ServingVersion + " ...")
+	baseURL := "https://github.com/knative/serving/releases/download/knative-v" + ServingVersion
 
 	if err := retryingApply(baseURL + "/serving-crds.yaml"); err != nil {
 		return fmt.Errorf("wait: %w", err)
@@ -150,8 +139,8 @@ func Serving() error {
 
 // Eventing installs Knative Eventing from Github YAML files
 func Eventing() error {
-	fmt.Println("🔥 Installing Knative Eventing v" + eventingVersion + " ... ")
-	baseURL := "https://github.com/knative/eventing/releases/download/v" + eventingVersion
+	fmt.Println("🔥 Installing Knative Eventing v" + EventingVersion + " ... ")
+	baseURL := "https://github.com/knative/eventing/releases/download/knative-v" + EventingVersion
 
 	if err := retryingApply(baseURL + "/eventing-crds.yaml"); err != nil {
 		return fmt.Errorf("wait: %w", err)
